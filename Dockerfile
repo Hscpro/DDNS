@@ -1,6 +1,5 @@
 FROM python:3.9.5
 WORKDIR /root
-COPY ./etc/apt.sources.list /etc/apt/sources.list
 
 RUN apt-get update -y && \
     apt-get install -y cron && \
