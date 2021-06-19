@@ -133,7 +133,7 @@ RUN set -ex; \
 		\) -exec rm -rf '{}' +; \
 	rm -f get-pip.py
 
-RUN echo 'echo "Hello, Shell"' > /test.su
-RUN chmod 755 /test.su
-RUN echo "*/5 * * * *   /test.su" > /etc/crontabs/root
+RUN echo 'python3 /ddns/run.py' > /ddns.su
+RUN chmod 755 /ddns.su
+RUN echo "*/5 * * * *   /ddns.su" > /etc/crontabs/root
 CMD [ "crond", "-f" ]
