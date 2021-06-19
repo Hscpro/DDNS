@@ -140,5 +140,6 @@ RUN set -ex; \
 	rm -f get-pip.py
 
 RUN apk add --no-cache dcron libcap
-RUN echo "*/5 * * * *   python3 /ddns/run.py" > /etc/crontabs/root
-CMD [ "crond", "-f" ]
+#RUN echo "*/5 * * * *   python3 /ddns/run.py" > /etc/crontabs/root
+#CMD [ "crond", "-f" ]
+CMD ["crond", "-c", "/tmp/crontabs", "-l", "0", "-d", "0", "-f"]
