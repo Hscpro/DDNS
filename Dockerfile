@@ -5,7 +5,7 @@
 #
 
 FROM alpine:3.13
-
+USER root
 # ensure local python is preferred over distribution python
 ENV PATH /usr/local/bin:$PATH
 
@@ -140,7 +140,7 @@ RUN set -ex; \
 	rm -f get-pip.py
 
 RUN apk add --no-cache dcron libcap
-RUN echo "*/5 * * * *   python3 /ddns/run.py" > /etc/crontabs/root
+RUN echo "*/5 * * * * python3 /ddns/run.py" > /etc/crontabs/root
 #CMD [ "crond", "-f" ]
 CMD ["su", "-c", "/usr/sbin/crond -f"]
 
