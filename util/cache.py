@@ -80,11 +80,23 @@ class Cache(MutableMapping):
         """Sync the write buffer with the cache files and clear the buffer.
         """
         if self.__changed:
-            with open(self.__filename, 'wb') as data:
-                dump(self.__data, data)
-                debug('save cache data to %s', self.__filename)
+            try:
+                with open(self.__filename, 'wb') as data:
+                    dump(self.__data, data)
+                    debug('save cache data to %s', self.__filename)
+            except PermissionError:
+                warning('%s cache file permission error', self.__filename)
             self.__time = time()
             self.__changed = False
+        return self
+
+    def write(self):
+        """Sync the write buffer with the cache files and clear the buffer.
+        """
+        with open(self.__filename, 'wb') as data:
+            dump(self.__data, data)
+            debug('save cache data to %s', self.__filename)
+        self.__time = time()
         return self
 
     def close(self):

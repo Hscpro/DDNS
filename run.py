@@ -1,22 +1,18 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
-"""
-DDNS
-@author: New Future
-@modified: rufengsuixing
-"""
-from __future__ import print_function
-from argparse import ArgumentParser, RawTextHelpFormatter
-from json import load as loadjson, dump as dumpjson
-from time import ctime
-from os import path, environ, stat, name as os_name
-from tempfile import gettempdir
-from logging import DEBUG, basicConfig, info, warning, error, debug
-from subprocess import check_output
 
+import os
 import sys
+import socket
+import time
+from urllib.parse import ParseResultBytes
+import tcping
 
-from util import ip
+from argparse import ArgumentParser, RawTextHelpFormatter
+from os import path, environ, stat, name as os_name
+from json import load as loadjson, dump as dumpjson
+from tempfile import gettempdir
+
 from util.cache import Cache
 
 __version__ = "${BUILD_SOURCEBRANCHNAME}@${BUILD_DATE}"  # CI 时会被Tag替换
@@ -27,15 +23,6 @@ ddns[%s]
 (?) issues or bugs [问题和帮助]: https://github.com/NewFuture/DDNS/issues
 Copyright (c) New Future (MIT License)
 """ % (__version__)
-
-environ["DDNS_VERSION"] = "${BUILD_SOURCEBRANCHNAME}"
-
-if getattr(sys, 'frozen', False):
-    # https://github.com/pyinstaller/pyinstaller/wiki/Recipe-OpenSSL-Certificate
-    environ['SSL_CERT_FILE'] = path.join(
-        getattr(sys, '_MEIPASS'), 'lib', 'cert.pem')
-
-CACHE_FILE = path.join(gettempdir(), 'ddns.cache')
 
 
 def get_config(key=None, default=None, path="config.json"):
@@ -48,21 +35,13 @@ def get_config(key=None, default=None, path="config.json"):
                 get_config.config = loadjson(configfile)
                 get_config.time = stat(path).st_mtime
         except IOError:
-            error(' Config file `%s` does not exist!' % path)
             with open(path, 'w') as configfile:
                 configure = {
-                    "$schema": "https://ddns.newfuture.cc/schema/v2.8.json",
                     "id": "YOUR ID or EMAIL for DNS Provider",
                     "token": "YOUR TOKEN or KEY for DNS Provider",
                     "dns": "dnspod",
-                    "ipv4": [
-                        "newfuture.cc",
-                        "ddns.newfuture.cc"
-                    ],
-                    "ipv6": [
-                        "newfuture.cc",
-                        "ipv6.ddns.newfuture.cc"
-                    ],
+                    "ipv4": "",
+                    "ipv6": "",
                     "index4": "default",
                     "index6": "default",
                     "ttl": None,
@@ -70,7 +49,8 @@ def get_config(key=None, default=None, path="config.json"):
                     "debug": False,
                 }
                 dumpjson(configure, configfile, indent=2, sort_keys=True)
-            sys.stdout.write("New template configure file `%s` is generated.\n" % path)
+            sys.stdout.write(
+                "New template configure file `%s` is generated.\n" % path)
             sys.exit(1)
         except:
             sys.exit('fail to load config from file: %s' % path)
@@ -80,120 +60,220 @@ def get_config(key=None, default=None, path="config.json"):
         return get_config.config
 
 
-def get_ip(ip_type, index="default"):
+def PingPort(ip, port):
+    # try:
+    #    socket.gethostbyaddr(ip)
+    #    return True
+    # except socket.herror:
+    #    print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())) + " - 网络故障")
+    #    return False
+    try:
+        Pingclass = tcping.Ping(ip, port, 1)
+        Pingclass.ping(get_config('pings'))
+        return Pingclass._failed
+    except:
+        return get_config('pings')
+
+
+def PingDNS(address):
     """
-    get IP address
+    ping 主备网络
     """
-    if index is False:  # disabled
-        return False
-    elif type(index) == list:  # 如果获取到的规则是列表，则依次判断列表中每一个规则，直到找到一个可以正确获取到的IP
-        value = None
-        for i in index:
-            value = get_ip(ip_type, i)
-            if value:
-                break
-    elif str(index).isdigit():  # 数字 local eth
-        value = getattr(ip, "local_v" + ip_type)(index)
-    elif index.startswith('cmd:'):  # cmd
-        value = str(check_output(index[4:]).strip().decode('utf-8'))
-    elif index.startswith('shell:'):  # shell
-        value = str(check_output(
-            index[6:], shell=True).strip().decode('utf-8'))
-    elif index.startswith('url:'):  # 自定义 url
-        value = getattr(ip, "public_v" + ip_type)(index[4:])
-    elif index.startswith('regex:'):  # 正则 regex
-        value = getattr(ip, "regex_v" + ip_type)(index[6:])
-    elif any((c in index) for c in '*.:'):  # 兼容 regex
-        value = getattr(ip, "regex_v" + ip_type)(index)
-    else:
-        value = getattr(ip, index + "_v" + ip_type)()
-
-    return value
-
-
-def change_dns_record(dns, proxy_list, **kw):
-    for proxy in proxy_list:
-        if not proxy or (proxy.upper() in ['DIRECT', 'NONE']):
-            dns.PROXY = None
+    try:
+        #result = os.system("ping www.baidu.com -n 3 -w 1")
+        result = os.system("ping %s -n 3 -w 1" % (address))
+        if result != 0:
+            print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())) + " - 网络故障")
+            return False
         else:
-            dns.PROXY = proxy
-        record_type, domain = kw['record_type'], kw['domain']
-        print('\n%s(%s) ==> %s [via %s]' %
-              (domain, record_type, kw['ip'], proxy))
-        try:
-            return dns.update_record(domain, kw['ip'], record_type=record_type)
-        except Exception as e:
-            error(e)
-    return False
-
-
-def update_ip(ip_type, cache, dns, proxy_list):
-    """
-    更新IP
-    """
-    ipname = 'ipv' + ip_type
-    domains = get_config(ipname)
-    if not domains:
-        return None
-    index_rule = get_config('index' + ip_type, "default")  # 从配置中获取index配置
-    address = get_ip(ip_type, index_rule)
-    if not address:
-        error('Fail to get %s address!' ,ipname)
+            return True
+    except:
         return False
-    elif cache and (address == cache[ipname]):
-        print('.', end=" ")  # 缓存命中
-        return True
-    record_type = (ip_type == '4') and 'A' or 'AAAA'
-    update_fail = False  # https://github.com/NewFuture/DDNS/issues/16
-    for domain in domains:
-        if change_dns_record(dns, proxy_list, domain=domain, ip=address, record_type=record_type):
-            update_fail = True
-    if cache is not False:
-        # 如果更新失败删除缓存
-        cache[ipname] = update_fail and address
+
+def Resolve(address):
+    try:
+        return socket.gethostbyname(address)
+    except:
+        print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())) + " - " + address + "解析失败")
+
+def update_ip(dns, domain, type, value, cloudflare):
+    """
+    更新IP失败重试
+    """
+    retry = 0
+    while retry < 3:
+        try:
+            if dns.update_record(domain, value, type, cloudflare):
+                return True
+        except:
+            if retry < 3:
+                retry = retry + 1
+            else:
+                return False
 
 
 def main():
-    """
-    更新
-    """
-    parser = ArgumentParser(description=__description__,
-                            epilog=__doc__, formatter_class=RawTextHelpFormatter)
-    parser.add_argument('-v', '--version',
-                        action='version', version=__version__)
-    parser.add_argument('-c', '--config',
-                        default="config.json", help="run with config file [配置文件路径]")
+
+    # 日志级别
+    ################################################
+    #basicConfig(level="DEBUG")
+
+    # 读入传参
+    ################################################
+    parser = ArgumentParser(description=__description__,epilog=__doc__, formatter_class=RawTextHelpFormatter)
+    parser.add_argument('-v', '--version',action='version', version=__version__)
+    parser.add_argument('-c', '--config',default="config.json", help="配置文件路径")
+    parser.add_argument('-a', '--cache',default="ddns.cache", help="缓存文件路径")
     config_file = parser.parse_args().config
     get_config(path=config_file)
-    # Dynamicly import the dns module as configuration
-    dns_provider = str(get_config('dns', 'dnspod').lower())
-    dns = getattr(__import__('dns', fromlist=[dns_provider]), dns_provider)
+    CACHE_FILE = parser.parse_args().cache
+
+    # 声明DNS更新类
+    ################################################
+    dns_provider = str(get_config('dns', 'dnspod').lower())  # dns_provider是类名称
+    dns = getattr(__import__('dns', fromlist=[dns_provider]), dns_provider)  # dns是类
+
+    # 载入配置
+    ################################################
     dns.Config.ID = get_config('id')
     dns.Config.TOKEN = get_config('token')
     dns.Config.TTL = get_config('ttl')
-    if get_config('debug'):
-        ip.DEBUG = get_config('debug')
-        basicConfig(
-            level=DEBUG,
-            format='%(asctime)s <%(module)s.%(funcName)s> %(lineno)d@%(pathname)s \n[%(levelname)s] %(message)s')
-        print("DDNS[", __version__, "] run:", os_name, sys.platform)
-        print("Configuration was loaded from <==", path.abspath(config_file))
-        print("=" * 25, ctime(), "=" * 25, sep=' ')
 
-    proxy = get_config('proxy') or 'DIRECT'
-    proxy_list = proxy.strip('; ') .split(';')
-
-    cache = get_config('cache', True) and Cache(CACHE_FILE)
-    if cache is False:
-        info("Cache is disabled!")
-    elif get_config.time >= cache.time:
-        warning("Cache file is out of dated.")
+    # 建立缓存，配置文件修改则重建
+    ################################################
+    cache = Cache(CACHE_FILE)
+    if get_config.time >= cache.time:
         cache.clear()
-    elif not cache:
-        debug("Cache is empty.")
-    update_ip('4', cache, dns, proxy_list)
-    update_ip('6', cache, dns, proxy_list)
+        cache["dns"] = {}
+        cache["ddns"] = ""
+        print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())) + " - 检测到配置文件改动，清空缓存")
+
+    # 预读缓存到内存
+    ################################################
+    prefetch = {}
+    prefetch["dns"] = cache["dns"]
+    prefetch["ddns"] = cache["ddns"]
+
+    # IF1 检查网络是否正常
+    # YES 解析服务器域名 -> IF2
+    ################################################
+    if PingPort("www.baidu.com", 443) < get_config('pings'):
+        # 判断解析域名缓存是否为空，为空触发解析（len(prefetch["dns"])多一个备用服务器）
+        # 将解析的地址写入缓存，后续直接验证IP是否可用不可用再进行解析，避免频繁解析。
+        if not prefetch["dns"] or len(prefetch["dns"]) < len(get_config('addresslis4')):
+            prefetch["dns"] = {}
+            prefetch["ddns"] = ""
+            #解析备用服务器
+            try:
+                prefetch["dns"][get_config('backser')] = socket.gethostbyname(get_config('backser'))
+            except:
+                print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())) + " - " + get_config('backser') + "解析失败")
+            # 遍历解析服务器
+            for Lisdata in get_config('addresslis4'):
+                try:
+                    prefetch["dns"][Lisdata["name"]] = socket.gethostbyname(Lisdata["name"])
+                except:
+                    print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())) + " - " + Lisdata["name"] + "解析失败")
+            #将解析结果写入缓存
+            cache["dns"] = prefetch["dns"]
+            cache.write()
+        #若所有域名都解析失败判定为异常
+        if len(prefetch["dns"]) == 0:
+            dns_check = False
+            print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())) + " - 所有服务器解析失败")
+        else:
+            dns_check = True
+
+        ## IF2 缓存是否有效、缓存内IP是否存在
+        ## YES 触发更新 -> IF3
+        ################################################
+        update = False
+        if dns_check and prefetch["ddns"]:
+            try:
+                # 缓存的DDNS值（域名记录值）等于“backser解析后的地址”或“tunnelscname的值”直接触发更新
+                if prefetch["ddns"] == prefetch["dns"][(get_config('backser'))] or prefetch["ddns"] == get_config('tunnelscname'):
+                    update = True
+                else:
+                    # 缓存的DDNS值测试连接失败次数超过pings设定的值时触发更新
+                    if PingPort(prefetch["ddns"], get_config('port')) >= get_config('pings'):
+                        update = True
+            except:
+                update = True
+
+        ## IF3 域名解析正常、没有缓存、更新标志位为启用
+        ## YES 进入IP筛选程序 -> IF4
+        ################################################
+        if dns_check and (not prefetch["ddns"] or update):
+            Fadd = []
+            ipdat = []
+            dictlen = 0
+            for key, values in prefetch["dns"].items():
+                #列表嵌套字典
+                ipdat.append({key: values})
+                ipdat[dictlen]["dorps"] = 0
+                ipdat[dictlen]["times"] = 0
+                try:
+                    #测试连接
+                    Pingclass = tcping.Ping(values, get_config('port'), 2)
+                    Pingclass.ping(get_config('pings'))
+                    #连接错误数
+                    ipdat[dictlen]["dorps"] = Pingclass._failed
+                    #连接时间，取平均数
+                    ipdat[dictlen]["times"] = round(
+                        sum(Pingclass._conn_times)/len(Pingclass._conn_times), 2)
+                #运行出错直接判定为连接失败
+                except:
+                    ipdat[dictlen]["dorps"] = get_config('pings')
+                #将连接失败次数X1000毫秒例入排序
+                if ipdat[dictlen]["dorps"] > 0:
+                    ipdat[dictlen]["times"] += 1000*Pingclass._failed
+                #将连接失败的域名重新更新IP地址
+                if ipdat[dictlen]["dorps"] >= get_config('pings'):
+                    try:
+                        prefetch["dns"][key] = socket.gethostbyname(key)
+                        #将重新解析的结果写入缓存
+                        cache["dns"] = prefetch["dns"]
+                        cache.write()
+                    except:
+                        print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())) + " - " + key + "二次解析失败")
+                #循环计位
+                dictlen += 1
+            #排序得出最快、出错最低的IP
+            Fadd = sorted(ipdat, key=lambda i: (i['dorps'], i['times']))[0]
 
 
+            # IF4 验证返回的IP并更新域名
+            # YES 更新域名
+            ################################################
+            if Fadd['dorps'] < get_config('pings'):
+                FastIP = list(Fadd.values())[0]
+                domain = get_config('ipv4')
+                if FastIP != prefetch["ddns"]:
+                    cache["ddns"] = FastIP
+                    if update_ip(dns, domain, "A", FastIP, False):
+                        print(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time())) + " - 更新地址：" + domain + "(" + FastIP + ")")
+                    else:
+                        cache["ddns"] = ""
+                        print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())) + " - DDNS更新失败")
+            #所有中转服务器不可用，切换到 CloudFlare Tunnels 地址
+            else:
+                cname = get_config('tunnelscname')
+                domain = get_config('ipv4')
+                if cname != prefetch["ddns"]:
+                    cache["ddns"] = cname
+                    if update_ip(dns, domain, "CNAME", cname, True):
+                        print(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time())) + " - 更新地址：" + domain + "(" + cname + ")")
+                    else:
+                        cache["ddns"] = ""
+                        print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())) + " - DDNS更新失败")
+    #IF1-ERR
+    else:
+        print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())) + " - 网络检查未通过")
+
+    #结束
+    pass
+    return 0
+    
 if __name__ == '__main__':
     main()
+    sys.exit(0)

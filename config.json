@@ -1,0 +1,31 @@
+{
+  "dns": "cloudflare",
+  "id": "",
+  "index4": "default",
+  "index6": "default",
+  "ipv4": "xxxx.xxxx.com",
+  "ipv6": "xxxx.xxxx.com",
+  "proxy": null,
+  "token": "xxx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "ttl": 60,
+  "port": 2096,
+  "pings": 3,
+  "tunnelscname": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.cfargotunnel.com",
+  "backser": "xxxx.xxxx.xxxx.com",
+  "addresslis4": [
+    {
+      "name": "xxxx.xxxx.xxxx.com"
+    },
+    {
+      "name": "xxxx.xxxx.xxxx.com"
+    }
+  ],
+  "addresslis6": [
+    {
+      "name": "xxxx.xxxx.xxxx.com"
+    },
+    {
+      "name": "xxxx.xxxx.xxxx.com"
+    }
+  ]
+}

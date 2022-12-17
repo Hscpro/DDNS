@@ -39,7 +39,7 @@ def request(method, action, param=None, **params):
     """
     if param:
         params.update(param)
-    
+
     params = dict((k, params[k]) for k in params if params[k] is not None)
     info("%s/%s : %s", API.SITE, action, params)
     if Config.PROXY:
@@ -57,9 +57,11 @@ def request(method, action, param=None, **params):
             action += '?' + urlencode(params)
         params = None
     if not Config.ID:
-        headers = {"Content-type": "application/json", "Authorization": "Bearer " + Config.TOKEN}
+        headers = {"Content-type": "application/json",
+                   "Authorization": "Bearer " + Config.TOKEN}
     else:
-        headers = {"Content-type": "application/json", "X-Auth-Email": Config.ID, "X-Auth-Key": Config.TOKEN}
+        headers = {"Content-type": "application/json",
+                   "X-Auth-Email": Config.ID, "X-Auth-Key": Config.TOKEN}
     conn.request(method, '/client/v4/zones' + action, params, headers)
     response = conn.getresponse()
     res = response.read().decode('utf8')
@@ -83,9 +85,15 @@ def get_zone_id(domain):
         切割域名获取主域名ID(Zone_ID)
         https://api.cloudflare.com/#zone-list-zones
     """
-    zones = request('GET', '', per_page=50)
-    zone = next((z for z in zones if domain.endswith(z.get('name'))), None)
-    zoneid = zone and zone['id']
+    zoneid = None
+    domain_slice = domain.split('.')
+    index = 2
+    # ddns.example.com => example.com; ddns.example.eu.org => example.eu.org
+    while (not zoneid) and (index <= len(domain_slice)):
+        zones = request('GET', '', name='.'.join(domain_slice[-index:]))
+        zone = next((z for z in zones if domain.endswith(z.get('name'))), None)
+        zoneid = zone and zone['id']
+        index += 1
     return zoneid
 
 
@@ -101,7 +109,7 @@ def get_records(zoneid, **conditions):
         get_records.records = {}  # "静态变量"存储已查询过的id
         get_records.keys = ('id', 'type', 'name', 'content', 'proxied', 'ttl')
 
-    if not zoneid in get_records.records:
+    if zoneid not in get_records.records:
         get_records.records[cache_key] = {}
         data = request('GET', '/' + zoneid + '/dns_records',
                        per_page=100, **conditions)
@@ -120,7 +128,7 @@ def get_records(zoneid, **conditions):
     return records
 
 
-def update_record(domain, value, record_type="A"):
+def update_record(domain, value, record_type="A", record_proxied=False):
     """
     更新记录
     """
@@ -129,7 +137,8 @@ def update_record(domain, value, record_type="A"):
     if not zoneid:
         raise Exception("invalid domain: [ %s ] " % domain)
 
-    records = get_records(zoneid, name=domain, type=record_type)
+    records = get_records(zoneid, name=domain)
+    #records = get_records(zoneid, name=domain, type=record_type)
     cache_key = zoneid + "_" + domain + "_" + record_type
     result = {}
     if records:  # update
@@ -137,7 +146,7 @@ def update_record(domain, value, record_type="A"):
         for (rid, record) in records.items():
             if record['content'] != value:
                 res = request('PUT', '/' + zoneid + '/dns_records/' + record['id'],
-                              type=record_type, content=value, name=domain, ttl=Config.TTL)
+                              type=record_type, content=value, name=domain, proxied=record_proxied, ttl=Config.TTL)
                 if res:
                     get_records.records[cache_key][rid]['content'] = value
                     result[rid] = res.get("name")
@@ -148,7 +157,7 @@ def update_record(domain, value, record_type="A"):
     else:  # create
         # https://api.cloudflare.com/#dns-records-for-a-zone-create-dns-record
         res = request('POST', '/' + zoneid + '/dns_records',
-                      type=record_type, name=domain, content=value, proxied=False, ttl=Config.TTL)
+                      type=record_type, name=domain, content=value, proxied=record_proxied, ttl=Config.TTL)
         if res:
             get_records.records[cache_key][res['id']] = res
             result = res
